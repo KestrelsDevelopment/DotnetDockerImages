@@ -1,0 +1,11 @@
+services:
+  kestrelsdev.dotnet9.sdk:
+    image: ghcr.io/kestrelsdevelopment/kestrelsdev.dotnet9.sdk
+    build:
+      context: ./Dotnet9/sdk
+      dockerfile: ./Dockerfile
+  kestrelsdev.dotnet9.runtime:
+    image: ghcr.io/kestrelsdevelopment/kestrelsdev.dotnet9.runtime
+    build:
+      context: ./Dotnet9/runtime
+      dockerfile: ./Dockerfile
