@@ -3,11 +3,19 @@ FROM --platform=$BUILDPLATFORM ubuntu:24.04 AS fetch
 
 # install Dependencys
 ENV DEBIAN_FRONTEND=noninteractive
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl tzdata tar \
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      ca-certificates curl tzdata tar qemu-user-static \
   && rm -rf /var/lib/apt/lists/* && update-ca-certificates
 
-# Set .Net Args
+# Enable multiarch when cross-building to ARM64 so QEMU can run the binary
 ARG TARGETARCH
+RUN if [ "$TARGETARCH" = "arm64" ]; then \
+      dpkg --add-architecture arm64 && \
+      apt-get update && \
+      apt-get install -y libc6:arm64 libstdc++6:arm64 libgcc-s1:arm64; \
+    fi
+
+# Set .Net Args
 ARG DOTNET_RUNTIME_VERSION=9.0.0
 ARG RUNTIME_KIND=aspnetcore
 ENV DOTNET_ROOT=/usr/share/dotnet
@@ -30,8 +38,11 @@ RUN set -eux; \
     --version "$DOTNET_RUNTIME_VERSION" \
     --architecture "$ARCH" \
     --quality ga; \
-  rm -f /tmp/dotnet-install.sh; \
-  "$DOTNET_ROOT/dotnet" --info
+  rm -f /tmp/dotnet-install.sh
+
+# Chech if dotnet is installed Corectly
+RUN "$DOTNET_ROOT/dotnet" --info
+
 
 # ========= Stage 2: collect only the target-arch system deps (runs on target arch) =========
 FROM ubuntu:24.04 AS deps
