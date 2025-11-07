@@ -1,4 +1,14 @@
 services:
+  kestrelsdev.dotnet8.sdk:
+    image: ghcr.io/kestrelsdevelopment/kestrelsdev.dotnet8.sdk
+    build:
+      context: ./Dotnet8/sdk
+      dockerfile: ./Dockerfile
+  kestrelsdev.dotnet8.runtime:
+    image: ghcr.io/kestrelsdevelopment/kestrelsdev.dotnet8.runtime
+    build:
+      context: ./Dotnet8/runtime
+      dockerfile: ./Dockerfile
   kestrelsdev.dotnet9.sdk:
     image: ghcr.io/kestrelsdevelopment/kestrelsdev.dotnet9.sdk
     build:
@@ -6,6 +16,16 @@ services:
       dockerfile: ./Dockerfile
   kestrelsdev.dotnet9.runtime:
     image: ghcr.io/kestrelsdevelopment/kestrelsdev.dotnet9.runtime
+    build:
+      context: ./Dotnet9/runtime
+      dockerfile: ./Dockerfile
+  kestrelsdev.dotnet10.sdk:
+    image: ghcr.io/kestrelsdevelopment/kestrelsdev.dotnet10.sdk
+    build:
+      context: ./Dotnet10/sdk
+      dockerfile: ./Dockerfile
+  kestrelsdev.dotnet10.runtime:
+    image: ghcr.io/kestrelsdevelopment/kestrelsdev.dotnet10.runtime
     build:
       context: ./Dotnet9/runtime
       dockerfile: ./Dockerfile
