@@ -1,12 +1,9 @@
 # syntax=docker/dockerfile:1.6
 ARG BASE_DEBIAN=debian:trixie-slim
-# Add extra Debian packages here (space-separated), e.g. "tzdata fontconfig"
+# Optional extras
 ARG EXTRA_APT_PACKAGES="curl"
-# Add extra binaries here (space-separated) to copy into the final image
-# with all their ELF shared-library deps resolved, e.g. "curl"
 ARG EXTRA_BINS="curl"
 
-# --- deps stage: assemble a rootfs under /rootfs, but ONLY under /rootfs/usr and /rootfs/etc ---
 FROM ${BASE_DEBIAN} AS deps
 ARG DOTNET_CHANNEL=10.0
 ARG DOTNET_VERSION=""
@@ -15,80 +12,86 @@ ARG EXTRA_BINS
 ARG TARGETARCH
 ARG DEBIAN_FRONTEND=noninteractive
 
-# Base runtime deps (adjust as needed for your app)
+# Base deps (ICU, SSL, Kerberos, zlib). Curl stays optional via build-args.
 RUN set -eux; \
     apt-get update; \
     apt-get install -y --no-install-recommends \
-      ca-certificates curl tzdata \
+      ca-certificates tzdata \
       libicu76 libssl3 libcurl4 zlib1g \
       libgcc-s1 libstdc++6 \
       libkrb5-3 libgssapi-krb5-2 \
-      $EXTRA_APT_PACKAGES; \
+      ${EXTRA_APT_PACKAGES}; \
     rm -rf /var/lib/apt/lists/*
 
-# Install dotnet shared runtime into /usr/share/dotnet inside this stage
-# (This uses the official dotnet-install script so we don't need apt repos.)
+ENV DOTNET_ROOT=/usr/share/dotnet
+RUN mkdir -p "$DOTNET_ROOT"
+
+# Install ASP.NET Core runtime
 RUN set -eux; \
-    mkdir -p /usr/share/dotnet; \
+    case "${TARGETARCH:-amd64}" in \
+      amd64) ARCH=x64 ;; \
+      arm64) ARCH=arm64 ;; \
+      *) echo "Unsupported arch: ${TARGETARCH}"; exit 1 ;; \
+    esac; \
     curl -fsSL https://dot.net/v1/dotnet-install.sh -o /tmp/dotnet-install.sh; \
     chmod +x /tmp/dotnet-install.sh; \
     if [ -n "${DOTNET_VERSION}" ]; then \
-      /tmp/dotnet-install.sh --install-dir /usr/share/dotnet --version "${DOTNET_VERSION}"; \
+      /tmp/dotnet-install.sh --version "${DOTNET_VERSION}" --runtime aspnetcore --install-dir "${DOTNET_ROOT}" --architecture "${ARCH}" --no-path; \
     else \
-      /tmp/dotnet-install.sh --install-dir /usr/share/dotnet --channel "${DOTNET_CHANNEL}"; \
+      /tmp/dotnet-install.sh --channel "${DOTNET_CHANNEL:-9.0}" --runtime aspnetcore --install-dir "${DOTNET_ROOT}" --architecture "${ARCH}" --no-path; \
     fi; \
-    rm -f /tmp/dotnet-install.sh
+    rm /tmp/dotnet-install.sh
 
-# Build the rootfs layout we will COPY into distroless
+# Prepare rootfs for distroless
 RUN set -eux; \
-    mkdir -p /rootfs/usr/bin /rootfs/usr/lib /rootfs/usr/share /rootfs/etc
+    mkdir -p /rootfs/usr/share/dotnet /rootfs/usr/lib /rootfs/usr/share \
+             /rootfs/etc/ssl/certs /rootfs/usr/share/zoneinfo /rootfs/etc; \
+    cp -a /usr/share/dotnet /rootfs/usr/share/; \
+    cp -a /etc/ssl/certs/ca-certificates.crt /rootfs/etc/ssl/certs/; \
+    cp -a /usr/share/zoneinfo /rootfs/usr/share/; \
+    [ -f /etc/nsswitch.conf ] && cp -a /etc/nsswitch.conf /rootfs/etc/ || true
 
-# Copy dotnet
+# Core shared libs (preserve multiarch layout) + ICU data
 RUN set -eux; \
-    mkdir -p /rootfs/usr/share; \
-    cp -a /usr/share/dotnet /rootfs/usr/share/
+    for d in /usr/lib/*-linux-gnu; do \
+      [ -d "$d" ] || continue; \
+      mkdir -p "/rootfs${d}"; \
+      cp -a $d/libicu* $d/libssl* $d/libcrypto* $d/libcurl* \
+            $d/libgcc_s* $d/libstdc++* $d/libgssapi_krb5* \
+            $d/libkrb5* $d/libk5crypto* $d/libcom_err* $d/libz* \
+            "/rootfs${d}" 2>/dev/null || true; \
+    done; \
+    if [ -d /usr/share/icu ]; then cp -a /usr/share/icu /rootfs/usr/share/; fi
 
-# Helper to copy a binary and all of its library deps into /rootfs/usr
-# Usage: copy_bin_with_deps /usr/bin/curl
+# Optional: copy extra binaries (e.g., curl) + ALL deps
+# IMPORTANT: remap /lib and /lib64 → /usr/lib in /rootfs to avoid creating /rootfs/lib
 RUN set -eux; \
     copy_bin_with_deps() { \
       b="$1"; \
-      dest="/rootfs/usr/bin"; \
-      mkdir -p "$dest"; \
-      cp -a "$b" "$dest/"; \
-      # pull shared libs discovered by ldd
-      ldd "$b" | awk '/=>/ {print $3} /^[[:space:]]*\/lib/ {print $1}' | while read -r so; do \
+      BPATH="$(command -v "$b" || true)"; \
+      [ -n "$BPATH" ] || { echo "WARN: binary '$b' not found"; return 0; }; \
+      mkdir -p "/rootfs$(dirname "$BPATH")"; \
+      cp -a "$BPATH" "/rootfs$BPATH"; \
+      ldd "$BPATH" | awk '/=>/ {print $3} /^[[:space:]]*\/lib/ {print $1}' | while read -r so; do \
         [ -f "$so" ] || continue; \
-        rel="$(echo "$so" | sed -E "s|^/usr/||")"; \
-        if expr "$so" : "^/usr/" >/dev/null; then \
-          mkdir -p "/rootfs/usr/$(dirname "$rel")"; \
-          cp -an "$so" "/rootfs/usr/$rel" || true; \
-        else \
-          # libraries under /lib* -> place under /rootfs/usr/lib* for usr-merge friendliness
-          sub="$(echo "$so" | sed -E "s|^/lib|/usr/lib|")"; \
-          mkdir -p "/rootfs$(dirname "$sub")"; \
-          cp -an "$so" "/rootfs$sub" || true; \
-        fi; \
+        case "$so" in \
+          /usr/*) dest="/rootfs$so" ;; \
+          /lib64/*) sub="$(echo "$so" | sed -E "s|^/lib64|/usr/lib|")"; dest="/rootfs$sub" ;; \
+          /lib/*) sub="$(echo "$so" | sed -E "s|^/lib|/usr/lib|")"; dest="/rootfs$sub" ;; \
+          *) dest="/rootfs$so" ;; \
+        esac; \
+        mkdir -p "$(dirname "$dest")"; cp -a "$so" "$dest"; \
       done; \
     }; \
-    for b in $EXTRA_BINS; do \
-      command -v "$b" >/dev/null 2>&1 || continue; \
-      copy_bin_with_deps "$(command -v "$b")"; \
-    done
+    if [ -n "$EXTRA_BINS" ]; then \
+      for b in $EXTRA_BINS; do copy_bin_with_deps "$b"; done; \
+    fi
 
-# Copy common config bits (certs, nss, tzdata) to /rootfs/etc and /rootfs/usr/share
-RUN set -eux; \
-    if [ -d /etc/ssl ]; then mkdir -p /rootfs/etc; cp -a /etc/ssl /rootfs/etc/; fi; \
-    if [ -f /etc/nsswitch.conf ]; then mkdir -p /rootfs/etc; cp -a /etc/nsswitch.conf /rootfs/etc/; fi; \
-    if [ -d /usr/share/zoneinfo ]; then mkdir -p /rootfs/usr/share; cp -a /usr/share/zoneinfo /rootfs/usr/share/; fi
-
-# Ensure nothing remains under /rootfs/lib (to avoid distroless /lib issues)
+# SAFETY: ensure there's NO /rootfs/lib (usr-merge friendliness for distroless)
 RUN set -eux; \
     if [ -d /rootfs/lib ]; then \
-      mkdir -p /rootfs/usr; \
-      # Move any mistakenly placed libs to /rootfs/usr/lib
       mkdir -p /rootfs/usr/lib; \
-      find /rootfs/lib -type f -name "*.so*" -exec cp -an {} /rootfs/usr/lib/ \; ; \
+      find /rootfs/lib -mindepth 1 -maxdepth 1 -exec mv -t /rootfs/usr/lib {} +; \
       rm -rf /rootfs/lib; \
     fi
 
@@ -96,18 +99,14 @@ RUN set -eux; \
 FROM gcr.io/distroless/cc-debian13:nonroot
 
 ENV DOTNET_ROOT=/usr/share/dotnet \
-    PATH=/usr/share/dotnet:$PATH \
+    PATH=/usr/share/dotnet:/usr/bin:$PATH \
     DOTNET_RUNNING_IN_CONTAINER=true \
     DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=false \
-    ASPNETCORE_URLS=http://+:8080
+    ASPNETCORE_URLS=http://+:8080 \
+    SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
 
 WORKDIR /app
-
-# Copy only directories that exist in distroless
-COPY --from=deps /rootfs/usr/ /usr/
-COPY --from=deps /rootfs/etc/ /etc/
-# If you stage your published app into /rootfs/app in deps, copy it here:
-# COPY --from=deps /rootfs/app/ /app/
+COPY --from=deps /rootfs/ /
 
 USER nonroot
 EXPOSE 8080
