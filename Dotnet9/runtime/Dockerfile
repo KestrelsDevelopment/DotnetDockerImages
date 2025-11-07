@@ -1,97 +1,76 @@
-# ========= Stage 1: fetch .NET runtime for the target arch (runs on build machine) =========
-FROM --platform=$BUILDPLATFORM debian:13 AS fetch
+ARG BASE_DEBIAN=debian:12-slim
+ARG DOTNET_VERSION=8.0.10
+# Add extra Debian packages here (space-separated), e.g. "tzdata fontconfig"
+ARG EXTRA_APT_PACKAGES=""
+# Add extra binaries here (space-separated) to copy into the final image
+# with all their ELF shared-library deps resolved, e.g. "curl"
+ARG EXTRA_BINS=""
 
-# install Dependencys
-ENV DEBIAN_FRONTEND=noninteractive
-RUN apt-get update && apt-get install -y --no-install-recommends \
-      ca-certificates curl tzdata tar qemu-user-static \
-  && rm -rf /var/lib/apt/lists/* && update-ca-certificates
-
-# Enable multiarch when cross-building to ARM64 so QEMU can run the binary
+FROM ${BASE_DEBIAN} AS deps
+ARG DOTNET_VERSION
+ARG EXTRA_APT_PACKAGES
+ARG EXTRA_BINS
 ARG TARGETARCH
-RUN if [ "$TARGETARCH" = "arm64" ]; then \
-      dpkg --add-architecture arm64 && \
-      apt-get update && \
-      apt-get install -y libc6:arm64 libstdc++6:arm64 libgcc-s1:arm64; \
+
+RUN set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends \
+      ca-certificates curl tzdata \
+      libicu72 libssl3 libcurl4 zlib1g \
+      libgcc-s1 libstdc++6 \
+      libkrb5-3 libgssapi-krb5-2 \
+      ${EXTRA_APT_PACKAGES}; \
+    rm -rf /var/lib/apt/lists/*
+
+ENV DOTNET_ROOT=/usr/share/dotnet
+RUN mkdir -p "$DOTNET_ROOT"
+
+RUN set -eux; \
+    case "${TARGETARCH:-amd64}" in \
+      amd64) ARCH=x64 ;; \
+      arm64) ARCH=arm64 ;; \
+      *) echo "Unsupported arch: ${TARGETARCH}"; exit 1 ;; \
+    esac; \
+    curl -fsSL "https://dotnetcli.azureedge.net/dotnet/aspnetcore/Runtime/${DOTNET_VERSION}/aspnetcore-runtime-${DOTNET_VERSION}-linux-${ARCH}.tar.gz" \
+      | tar -C "$DOTNET_ROOT" -xz
+
+RUN set -eux; \
+    mkdir -p /rootfs/usr/share/dotnet /rootfs/usr/lib /rootfs/etc/ssl/certs /rootfs/usr/share/zoneinfo; \
+    cp -a /usr/share/dotnet /rootfs/usr/share/; \
+    cp -a /etc/ssl/certs/ca-certificates.crt /rootfs/etc/ssl/certs/; \
+    cp -a /usr/share/zoneinfo /rootfs/usr/share/; \
+    for d in /usr/lib/*-linux-gnu; do \
+      [ -d "$d" ] || continue; \
+      cp -a $d/libicu* $d/libssl* $d/libcrypto* $d/libcurl* \
+            $d/libgcc_s* $d/libstdc++* $d/libgssapi_krb5* \
+            $d/libkrb5* $d/libk5crypto* $d/libcom_err* $d/libz* /rootfs/usr/lib/ 2>/dev/null || true; \
+    done; \
+    if [ -n "$EXTRA_BINS" ]; then \
+      for b in $EXTRA_BINS; do \
+        BPATH="$(command -v "$b" || true)"; \
+        [ -n "$BPATH" ] || { echo "WARN: binary '$b' not found"; continue; }; \
+        mkdir -p "/rootfs$(dirname "$BPATH")"; \
+        cp -a "$BPATH" "/rootfs$BPATH"; \
+        ldd "$BPATH" | awk '{print $3}' | grep -E '^/' | while read so; do \
+          mkdir -p "/rootfs$(dirname "$so")"; cp -a "$so" "/rootfs$so"; \
+        done; \
+      done; \
     fi
 
-# Set .Net Args
-ARG DOTNET_RUNTIME_VERSION=9.0.0
-ARG RUNTIME_KIND=aspnetcore
-ENV DOTNET_ROOT=/usr/share/dotnet
-ENV PATH="$DOTNET_ROOT:$PATH"
 
-# Install .net
-RUN set -eux; \
-  mkdir -p "$DOTNET_ROOT"; \
-  curl -fsSL https://dot.net/v1/dotnet-install.sh -o /tmp/dotnet-install.sh; \
-  chmod +x /tmp/dotnet-install.sh; \
-  ARCH="x64"; \
-  case "${TARGETARCH:-amd64}" in \
-    amd64) ARCH="x64" ;; \
-    arm64) ARCH="arm64" ;; \
-    *) echo "Unsupported TARGETARCH=${TARGETARCH}"; exit 1 ;; \
-  esac; \
-  /tmp/dotnet-install.sh \
-    --install-dir "$DOTNET_ROOT" \
-    --runtime "$RUNTIME_KIND" \
-    --version "$DOTNET_RUNTIME_VERSION" \
-    --architecture "$ARCH" \
-    --quality ga; \
-  rm -f /tmp/dotnet-install.sh
+FROM gcr.io/distroless/cc-debian12:nonroot
 
-# Chech if dotnet is installed Corectly
-RUN "$DOTNET_ROOT/dotnet" --info
+ENV DOTNET_ROOT=/usr/share/dotnet \
+    PATH=/usr/share/dotnet:$PATH \
+    DOTNET_RUNNING_IN_CONTAINER=true \
+    DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=false \
+    ASPNETCORE_URLS=http://+:8080
 
-
-# ========= Stage 2: collect only the target-arch system deps (runs on target arch) =========
-FROM debian:13 AS deps
-
-# install Dependencys
-ENV DEBIAN_FRONTEND=noninteractive
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates libssl3 libicu74 \
-  && rm -rf /var/lib/apt/lists/* && update-ca-certificates
-
-# Create Contaienr User
-ARG APP_UID=64198
-ARG APP_GID=64198
-RUN groupadd -g $APP_GID app && useradd -u $APP_UID -g $APP_GID -m -s /usr/sbin/nologin app
-
-# set needed ENVs
-ENV DOTNET_ROOT=/usr/share/dotnet
-ENV PATH="$DOTNET_ROOT:$PATH"
-WORKDIR /stage
-COPY --from=fetch /usr/share/dotnet/ /stage/dotnet/
-
-# Make RootFS Redy to Copy over
-RUN set -eux; \
-  mkdir -p /rootfs$DOTNET_ROOT /rootfs/etc /rootfs/etc/ssl/certs; \
-  cp -a /stage/dotnet /rootfs$DOTNET_ROOT; \
-  cp -v /etc/ssl/certs/ca-certificates.crt /rootfs/etc/ssl/certs/; \
-  find /rootfs$DOTNET_ROOT -type f -perm -u=x -print0 \
-    | xargs -0 -I{} sh -c 'ldd "{}" || true' \
-    | awk '/=>/ {print $3} /ld-linux/ {print $1}' \
-    | sort -u \
-    | while read -r lib; do [ -f "$lib" ] && cp -v --parents "$lib" /rootfs/ || true; done; \
-  cp -v /etc/nsswitch.conf /rootfs/etc/ || true; \
-  getent passwd app >> /rootfs/etc/passwd; \
-  getent group  app >> /rootfs/etc/group
-
-# ========= Stage 3: Build Final Container =========
-FROM scratch
-
-# Copy in RootFS
+WORKDIR /app
 COPY --from=deps /rootfs/ /
 
-# Set .net and ASP.net Rintime ENVs
-ENV DOTNET_ROOT=/usr/share/dotnet
-ENV PATH="$DOTNET_ROOT:$PATH"
-ENV DOTNET_RUNNING_IN_CONTAINER=true \
-    ASPNETCORE_URLS=http://+:8080 \
-    DOTNET_EnableDiagnostics=0 \
-    DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=0
-
-# Setup workdir and set user and expose default port
-WORKDIR /app
-USER 64198:64198
+# Distroless "nonroot" user has uid/gid 65532.
+USER nonroot
 EXPOSE 8080
+
+ENTRYPOINT ["dotnet"]

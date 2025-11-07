@@ -1,50 +1,37 @@
-FROM --platform=$BUILDPLATFORM debian:13
+ARG BASE_DEBIAN=debian:12-slim
+ARG DOTNET_SDK_VERSION=8.0.404
+# Add extra Debian packages here (space-separated), e.g. "nodejs python3"
+ARG EXTRA_APT_PACKAGES=""
 
-# install Dependencys
-ENV DEBIAN_FRONTEND=noninteractive
-RUN apt-get update && apt-get install -y --no-install-recommends \
-      ca-certificates curl git tzdata tar \
-    && rm -rf /var/lib/apt/lists/* \
-    && update-ca-certificates
-
-# Set .Net Args
+FROM ${BASE_DEBIAN} as sdk
+ARG DOTNET_SDK_VERSION
+ARG EXTRA_APT_PACKAGES
 ARG TARGETARCH
-ARG DOTNET_SDK_VERSION=latest
-ARG DOTNET_CHANNEL=9.0
-ENV DOTNET_ROOT=/usr/share/dotnet
-ENV PATH="$DOTNET_ROOT:$PATH"
-ENV DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1
 
-# Install .net
 RUN set -eux; \
-  mkdir -p "$DOTNET_ROOT"; \
-  curl -fsSL https://dot.net/v1/dotnet-install.sh -o /tmp/dotnet-install.sh; \
-  chmod +x /tmp/dotnet-install.sh; \
-  ARCH="x64"; \
-  case "${TARGETARCH:-amd64}" in \
-    amd64) ARCH="x64" ;; \
-    arm64) ARCH="arm64" ;; \
-    *) echo "Unsupported TARGETARCH=${TARGETARCH}"; exit 1 ;; \
-  esac; \
-  if [ "${DOTNET_SDK_VERSION}" != "latest" ]; then \
-    /tmp/dotnet-install.sh \
-      --install-dir "$DOTNET_ROOT" \
-      --version "$DOTNET_SDK_VERSION" \
-      --quality ga \
-      --architecture "$ARCH"; \
-  else \
-    /tmp/dotnet-install.sh \
-      --install-dir "$DOTNET_ROOT" \
-      --channel "$DOTNET_CHANNEL" \
-      --quality ga \
-      --architecture "$ARCH"; \
-  fi; \
-  rm -f /tmp/dotnet-install.sh; \
-  "$DOTNET_ROOT/dotnet" --info
+    apt-get update; \
+    apt-get install -y --no-install-recommends \
+      ca-certificates curl git openssh-client tzdata \
+      libc6 libgcc-s1 libstdc++6 libicu72 libssl3 libkrb5-3 libgssapi-krb5-2 zlib1g \
+      ${EXTRA_APT_PACKAGES}; \
+    rm -rf /var/lib/apt/lists/*
 
-# Create and Set Build User
-RUN useradd -m -u 10001 builder
+ENV DOTNET_ROOT=/usr/share/dotnet
+ENV PATH=$DOTNET_ROOT:$PATH
+ENV DOTNET_RUNNING_IN_CONTAINER=true
+ENV DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=false
+
+RUN set -eux; \
+    case "${TARGETARCH:-amd64}" in \
+      amd64) ARCH=x64 ;; \
+      arm64) ARCH=arm64 ;; \
+      *) echo "Unsupported arch: ${TARGETARCH}"; exit 1 ;; \
+    esac; \
+    mkdir -p "$DOTNET_ROOT"; \
+    curl -fsSL "https://dotnetcli.azureedge.net/dotnet/Sdk/${DOTNET_SDK_VERSION}/dotnet-sdk-${DOTNET_SDK_VERSION}-linux-${ARCH}.tar.gz" \
+      | tar -C "$DOTNET_ROOT" -xz; \
+    dotnet --info
+
+RUN useradd -m -u 65000 builder
 USER builder
-
-# Set Workdir
 WORKDIR /src
