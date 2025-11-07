@@ -1,4 +1,4 @@
-FROM --platform=$BUILDPLATFORM ubuntu:22.04
+FROM --platform=$BUILDPLATFORM debian:12
 
 # install Dependencys
 ENV DEBIAN_FRONTEND=noninteractive
