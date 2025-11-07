@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.6
 
-ARG BASE_DEBIAN=debian:13-slim
+ARG BASE_DEBIAN=debian:trixie-slim
 
 FROM ${BASE_DEBIAN} AS sdk
 ARG DOTNET_CHANNEL=8.0
@@ -20,7 +20,7 @@ RUN set -eux; \
     apt-get update; \
     apt-get install -y --no-install-recommends \
       ca-certificates curl git openssh-client tzdata \
-      libc6 libgcc-s1 libstdc++6 libicu72 libssl3 libkrb5-3 libgssapi-krb5-2 zlib1g \
+      libc6 libgcc-s1 libstdc++6 libicu76 libssl3 libkrb5-3 libgssapi-krb5-2 zlib1g \
       $EXTRA_APT_PACKAGES; \
     rm -rf /var/lib/apt/lists/*
 

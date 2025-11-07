@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1.6
-ARG BASE_DEBIAN=debian:13-slim
+ARG BASE_DEBIAN=debian:trixie-slim
 # Add extra Debian packages here (space-separated), e.g. "tzdata fontconfig"
 ARG EXTRA_APT_PACKAGES=""
 # Add extra binaries here (space-separated) to copy into the final image
@@ -18,7 +18,7 @@ RUN set -eux; \
     apt-get update; \
     apt-get install -y --no-install-recommends \
       ca-certificates curl tzdata \
-      libicu72 libssl3 libcurl4 zlib1g \
+      libicu76 libssl3 libcurl4 zlib1g \
       libgcc-s1 libstdc++6 \
       libkrb5-3 libgssapi-krb5-2 \
       ${EXTRA_APT_PACKAGES}; \
