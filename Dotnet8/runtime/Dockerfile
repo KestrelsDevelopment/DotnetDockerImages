@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1.6
-ARG BASE_DEBIAN=debian:12-slim
+ARG BASE_DEBIAN=debian:13-slim
 # Add extra Debian packages here (space-separated), e.g. "tzdata fontconfig"
 ARG EXTRA_APT_PACKAGES=""
 # Add extra binaries here (space-separated) to copy into the final image
@@ -77,7 +77,7 @@ RUN set -eux; \
       done; \
     fi
 
-FROM gcr.io/distroless/cc-debian12:nonroot
+FROM gcr.io/distroless/cc-debian13:nonroot
 
 ENV DOTNET_ROOT=/usr/share/dotnet \
     PATH=/usr/share/dotnet:$PATH \

@@ -1,13 +1,13 @@
 # syntax=docker/dockerfile:1.6
 ARG BASE_DEBIAN=debian:13-slim
 # Add extra Debian packages here (space-separated), e.g. "tzdata fontconfig"
-ARG EXTRA_APT_PACKAGES=""
+ARG EXTRA_APT_PACKAGES="curl"
 # Add extra binaries here (space-separated) to copy into the final image
 # with all their ELF shared-library deps resolved, e.g. "curl"
-ARG EXTRA_BINS=""
+ARG EXTRA_BINS="curl"
 
 FROM ${BASE_DEBIAN} AS deps
-ARG DOTNET_CHANNEL=9.0
+ARG DOTNET_CHANNEL=10.0
 ARG DOTNET_VERSION=""
 ARG EXTRA_APT_PACKAGES
 ARG EXTRA_BINS
@@ -44,7 +44,7 @@ RUN set -eux; \
         --no-path; \
     else \
       /tmp/dotnet-install.sh \
-        --channel "${DOTNET_CHANNEL:-9.0}" \
+        --channel "${DOTNET_CHANNEL:-10.0}" \
         --runtime aspnetcore \
         --install-dir "${DOTNET_ROOT:-/usr/share/dotnet}" \
         --architecture "${ARCH}" \

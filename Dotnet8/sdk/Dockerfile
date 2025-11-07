@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.6
 
-ARG BASE_DEBIAN=debian:12-slim
+ARG BASE_DEBIAN=debian:13-slim
 
 FROM ${BASE_DEBIAN} AS sdk
 ARG DOTNET_CHANNEL=8.0
