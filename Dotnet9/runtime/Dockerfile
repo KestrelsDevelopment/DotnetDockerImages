@@ -1,5 +1,5 @@
 # ========= Stage 1: fetch .NET runtime for the target arch (runs on build machine) =========
-FROM --platform=$BUILDPLATFORM debian:12 AS fetch
+FROM --platform=$BUILDPLATFORM debian:13 AS fetch
 
 # install Dependencys
 ENV DEBIAN_FRONTEND=noninteractive
@@ -45,7 +45,7 @@ RUN "$DOTNET_ROOT/dotnet" --info
 
 
 # ========= Stage 2: collect only the target-arch system deps (runs on target arch) =========
-FROM debian:12 AS deps
+FROM debian:13 AS deps
 
 # install Dependencys
 ENV DEBIAN_FRONTEND=noninteractive

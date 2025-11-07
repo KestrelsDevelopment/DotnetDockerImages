@@ -1,4 +1,4 @@
-FROM --platform=$BUILDPLATFORM debian:12
+FROM --platform=$BUILDPLATFORM debian:13
 
 # install Dependencys
 ENV DEBIAN_FRONTEND=noninteractive
