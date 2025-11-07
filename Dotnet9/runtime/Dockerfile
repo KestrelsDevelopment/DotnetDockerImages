@@ -1,5 +1,5 @@
+# syntax=docker/dockerfile:1.6
 ARG BASE_DEBIAN=debian:12-slim
-ARG DOTNET_VERSION=8.0.10
 # Add extra Debian packages here (space-separated), e.g. "tzdata fontconfig"
 ARG EXTRA_APT_PACKAGES=""
 # Add extra binaries here (space-separated) to copy into the final image
@@ -7,10 +7,12 @@ ARG EXTRA_APT_PACKAGES=""
 ARG EXTRA_BINS=""
 
 FROM ${BASE_DEBIAN} AS deps
-ARG DOTNET_VERSION
+ARG DOTNET_CHANNEL=9.0
+ARG DOTNET_VERSION=""
 ARG EXTRA_APT_PACKAGES
 ARG EXTRA_BINS
 ARG TARGETARCH
+ARG DEBIAN_FRONTEND=noninteractive
 
 RUN set -eux; \
     apt-get update; \
@@ -31,9 +33,26 @@ RUN set -eux; \
       arm64) ARCH=arm64 ;; \
       *) echo "Unsupported arch: ${TARGETARCH}"; exit 1 ;; \
     esac; \
-    curl -fsSL "https://dotnetcli.azureedge.net/dotnet/aspnetcore/Runtime/${DOTNET_VERSION}/aspnetcore-runtime-${DOTNET_VERSION}-linux-${ARCH}.tar.gz" \
-      | tar -C "$DOTNET_ROOT" -xz
+    curl -fsSL https://dot.net/v1/dotnet-install.sh -o /tmp/dotnet-install.sh; \
+    chmod +x /tmp/dotnet-install.sh; \
+    if [ -n "${DOTNET_VERSION}" ]; then \
+      /tmp/dotnet-install.sh \
+        --version "${DOTNET_VERSION}" \
+        --runtime aspnetcore \
+        --install-dir "${DOTNET_ROOT:-/usr/share/dotnet}" \
+        --architecture "${ARCH}" \
+        --no-path; \
+    else \
+      /tmp/dotnet-install.sh \
+        --channel "${DOTNET_CHANNEL:-9.0}" \
+        --runtime aspnetcore \
+        --install-dir "${DOTNET_ROOT:-/usr/share/dotnet}" \
+        --architecture "${ARCH}" \
+        --no-path; \
+    fi; \
+    rm /tmp/dotnet-install.sh
 
+# Prepare a /rootfs with everything needed for the distroless final image.
 RUN set -eux; \
     mkdir -p /rootfs/usr/share/dotnet /rootfs/usr/lib /rootfs/etc/ssl/certs /rootfs/usr/share/zoneinfo; \
     cp -a /usr/share/dotnet /rootfs/usr/share/; \
@@ -43,7 +62,8 @@ RUN set -eux; \
       [ -d "$d" ] || continue; \
       cp -a $d/libicu* $d/libssl* $d/libcrypto* $d/libcurl* \
             $d/libgcc_s* $d/libstdc++* $d/libgssapi_krb5* \
-            $d/libkrb5* $d/libk5crypto* $d/libcom_err* $d/libz* /rootfs/usr/lib/ 2>/dev/null || true; \
+            $d/libkrb5* $d/libk5crypto* $d/libcom_err* $d/libz* \
+            /rootfs/usr/lib/ 2>/dev/null || true; \
     done; \
     if [ -n "$EXTRA_BINS" ]; then \
       for b in $EXTRA_BINS; do \
@@ -57,7 +77,6 @@ RUN set -eux; \
       done; \
     fi
 
-
 FROM gcr.io/distroless/cc-debian12:nonroot
 
 ENV DOTNET_ROOT=/usr/share/dotnet \
@@ -69,8 +88,6 @@ ENV DOTNET_ROOT=/usr/share/dotnet \
 WORKDIR /app
 COPY --from=deps /rootfs/ /
 
-# Distroless "nonroot" user has uid/gid 65532.
 USER nonroot
 EXPOSE 8080
-
 ENTRYPOINT ["dotnet"]
