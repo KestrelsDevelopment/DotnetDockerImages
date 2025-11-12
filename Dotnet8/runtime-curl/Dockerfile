@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.6
 ARG BASE_DEBIAN=debian:trixie-slim
 # Optional extras
-ARG EXTRA_APT_PACKAGES="curl"
+ARG EXTRA_APT_PACKAGES="curl libnghttp3-9 libnghttp2-14"
 ARG EXTRA_BINS="curl"
 
 FROM ${BASE_DEBIAN} AS deps
@@ -85,7 +85,17 @@ RUN set -eux; \
     }; \
     if [ -n "$EXTRA_BINS" ]; then \
       for b in $EXTRA_BINS; do copy_bin_with_deps "$b"; done; \
-    fi
+    fi; \
+    for lib in /usr/lib/*-linux-gnu/libnghttp3*; do \
+      [ -f "$lib" ] || continue; \
+      dest="/rootfs$lib"; \
+      mkdir -p "$(dirname "$dest")"; cp -a "$lib" "$dest"; \
+    done; \
+    for lib in /usr/lib/*-linux-gnu/libnghttp2*; do \
+      [ -f "$lib" ] || continue; \
+      dest="/rootfs$lib"; \
+      mkdir -p "$(dirname "$dest")"; cp -a "$lib" "$dest"; \
+    done
 
 # SAFETY: ensure there's NO /rootfs/lib (usr-merge friendliness for distroless)
 RUN set -eux; \

@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.6
 ARG BASE_DEBIAN=debian:trixie-slim
 # Optional extras
-ARG EXTRA_APT_PACKAGES="curl"
+ARG EXTRA_APT_PACKAGES="curl libnghttp3-9 libnghttp2-14 libidn2-0"
 ARG EXTRA_BINS="curl"
 
 FROM ${BASE_DEBIAN} AS deps
@@ -63,8 +63,7 @@ RUN set -eux; \
     done; \
     if [ -d /usr/share/icu ]; then cp -a /usr/share/icu /rootfs/usr/share/; fi
 
-# Optional: copy extra binaries (e.g., curl) + ALL deps
-# IMPORTANT: remap /lib and /lib64 → /usr/lib in /rootfs to avoid creating /rootfs/lib
+# Copy specific binaries and their dependencies
 RUN set -eux; \
     copy_bin_with_deps() { \
       b="$1"; \
@@ -74,25 +73,34 @@ RUN set -eux; \
       cp -a "$BPATH" "/rootfs$BPATH"; \
       ldd "$BPATH" | awk '/=>/ {print $3} /^[[:space:]]*\/lib/ {print $1}' | while read -r so; do \
         [ -f "$so" ] || continue; \
-        case "$so" in \
-          /usr/*) dest="/rootfs$so" ;; \
-          /lib64/*) sub="$(echo "$so" | sed -E "s|^/lib64|/usr/lib|")"; dest="/rootfs$sub" ;; \
-          /lib/*) sub="$(echo "$so" | sed -E "s|^/lib|/usr/lib|")"; dest="/rootfs$sub" ;; \
-          *) dest="/rootfs$so" ;; \
-        esac; \
-        mkdir -p "$(dirname "$dest")"; cp -a "$so" "$dest"; \
+        dest="/rootfs$so"; \
+        mkdir -p "$(dirname "$dest")"; \
+        cp -a "$so" "$dest"; \
       done; \
     }; \
     if [ -n "$EXTRA_BINS" ]; then \
       for b in $EXTRA_BINS; do copy_bin_with_deps "$b"; done; \
     fi
 
-# SAFETY: ensure there's NO /rootfs/lib (usr-merge friendliness for distroless)
+# Copy additional libraries installed via EXTRA_APT_PACKAGES
+RUN set -eux; \
+    for d in /usr/lib /usr/lib64 /usr/lib/*-linux-gnu; do \
+      [ -d "$d" ] || continue; \
+      mkdir -p "/rootfs$d"; \
+      cp -a $d/* "/rootfs$d/" 2>/dev/null || true; \
+    done
+
+# SAFETY: Ensure usr-merge compatibility
 RUN set -eux; \
     if [ -d /rootfs/lib ]; then \
       mkdir -p /rootfs/usr/lib; \
-      find /rootfs/lib -mindepth 1 -maxdepth 1 -exec mv -t /rootfs/usr/lib {} +; \
+      find /rootfs/lib -mindepth 1 -exec cp -a {} /rootfs/usr/lib/ \; || true; \
       rm -rf /rootfs/lib; \
+    fi; \
+    if [ -d /rootfs/lib64 ]; then \
+      mkdir -p /rootfs/usr/lib; \
+      find /rootfs/lib64 -mindepth 1 -exec cp -a {} /rootfs/usr/lib/ \; || true; \
+      rm -rf /rootfs/lib64; \
     fi
 
 # --- final image ---
