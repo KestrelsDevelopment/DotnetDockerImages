@@ -50,7 +50,4 @@ RUN set -eux; \
     rm /tmp/dotnet-install.sh; \
     "${DOTNET_ROOT}/dotnet" --info
 
-# Non-root by default
-RUN useradd -m -u 65000 builder
-USER builder
 WORKDIR /src
