@@ -42,7 +42,7 @@ RUN set -eux; \
         --no-path; \
     else \
       /tmp/dotnet-install.sh \
-        --channel "${DOTNET_CHANNEL:-9.0}" \
+        --channel "${DOTNET_CHANNEL:-10.0}" \
         --install-dir "${DOTNET_ROOT:-/usr/share/dotnet}" \
         --architecture "${ARCH}" \
         --no-path; \
